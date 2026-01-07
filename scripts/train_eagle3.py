@@ -699,6 +699,7 @@ def main():
             length=args.ttt_length,
             attention_backend=args.attention_backend,
         )
+    print_on_rank0(f"{eagle3_model=}")
 
     eagle3_model = FSDP(
         eagle3_model,
