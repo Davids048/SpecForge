@@ -1328,7 +1328,11 @@ class LlamaForCausalLMEagle3(Eagle3DraftModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, config.pad_token_id
         )
-        self.midlayer = LlamaDecoderLayer(config, attention_backend=attention_backend)
+        num_layers = getattr(config, 'num_hidden_layers', 1)
+        self.midlayer = nn.ModuleList([
+            LlamaDecoderLayer(config, attention_backend=attention_backend)
+            for _ in range(num_layers)
+        ])
 
         if hasattr(config, "target_hidden_size"):
             self.fc = torch.nn.Linear(
@@ -1390,16 +1394,17 @@ class LlamaForCausalLMEagle3(Eagle3DraftModel):
 
         # fc
         hidden_states = self.fc(hidden_states)
-        hidden_states = self.midlayer(
-            input_emb=inputs_embeds,
-            hidden_states=hidden_states,
-            cache_hidden=cache_hidden,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=None,
-            output_attentions=False,
-            use_cache=False,
-        )
+        for layer in self.midlayer:
+            hidden_states = layer(
+                input_emb=inputs_embeds,
+                hidden_states=hidden_states,
+                cache_hidden=cache_hidden,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=None,
+                output_attentions=False,
+                use_cache=False,
+            )
 
         # norm
         hidden_states = self.norm(hidden_states)
@@ -1428,13 +1433,15 @@ class LlamaForCausalLMEagle3(Eagle3DraftModel):
         past_key_values: Optional[Cache] = None,
         use_cache: bool = True,
     ) -> torch.Tensor:
-        return self.midlayer(
-            input_emb=input_embeds,
-            hidden_states=hidden_states,
-            cache_hidden=cache_hidden,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            output_attentions=False,
-            use_cache=False,
-        )
+        for layer in self.midlayer:
+            hidden_states = layer(
+                input_emb=input_embeds,
+                hidden_states=hidden_states,
+                cache_hidden=cache_hidden,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                output_attentions=False,
+                use_cache=False,
+            )
+        return hidden_states
