@@ -95,7 +95,7 @@ class OnlineEagle3Model(Eagle3Model):
         attention_mask: torch.Tensor,
         target: torch.Tensor,
         loss_mask: torch.Tensor,
-        hidden_states: torch.Tensor,
+        hidden_states: torch.Tensor, # Target model hidden states.
         past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         position_ids: Optional[torch.Tensor] = None,
         **kwargs,

@@ -456,14 +456,14 @@ class SGLangEagle3TargetModel(Eagle3TargetModel):
                 data_cache, logits_list, aux_hidden_states_list, last_hidden_states_list
             )
         ):
-            aux_hidden_states_out.append(aux_hidden_states.unsqueeze(0))
-            loss_mask_out.append(data[2])
-            input_ids_out.append(data[0])
+            aux_hidden_states_out.append(aux_hidden_states.unsqueeze(0)) # Add batch dim -> T * (3*HD). Add to list.
+            loss_mask_out.append(data[2]) # B * T
+            input_ids_out.append(data[0]) # B * T
 
             # when generating hidden states for offline training, we don't compute logits and only keep the last_hidden_states
             # when training online, we don't keep the last_hidden_states and only keep the logits
             if logits is not None:
-                target_out.append(logits.unsqueeze(0))
+                target_out.append(logits.unsqueeze(0)) # add batch dim -> B * T * V, add to list.
             else:
                 target_out.append(None)
 
@@ -472,6 +472,7 @@ class SGLangEagle3TargetModel(Eagle3TargetModel):
             else:
                 last_hidden_states_out.append(None)
 
+        # concat on batch dim.
         aux_hidden_states_out = torch.cat(aux_hidden_states_out, dim=0)
 
         loss_mask_out = torch.cat(loss_mask_out, dim=0)

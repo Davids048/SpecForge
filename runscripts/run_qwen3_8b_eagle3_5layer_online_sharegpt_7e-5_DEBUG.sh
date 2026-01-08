@@ -14,7 +14,7 @@ mkdir -p $ROOT_DIR/logs
 CONFIG_NAME=qwen3-8b-eagle3-5layer
 LR=7e-5
 DATA=sharegpt_train
-RUNNAME=$CONFIG_NAME-${DATA}-$LR
+RUNNAME=$CONFIG_NAME-${DATA}-$LR-DEBUG
 echo $RUNNAME
 
 torchrun \
@@ -23,6 +23,7 @@ torchrun \
     $ROOT_DIR/scripts/train_eagle3.py \
     --target-model-path Qwen/Qwen3-8B \
     --draft-model-config $ROOT_DIR/configs/${CONFIG_NAME}.json \
+    --attention-backend sdpa \
     --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
     --output-dir $ROOT_DIR/outputs/$RUNNAME \
@@ -36,7 +37,7 @@ torchrun \
     --tp-size $TP_SIZE \
     --target-model-backend sglang \
     --save-interval 999999999 \
-    --report-to wandb \
+    --report-to none \
     --wandb-project specforge \
     --wandb-name $RUNNAME \
     2>&1 | tee $ROOT_DIR/logs/${RUNNAME}.log

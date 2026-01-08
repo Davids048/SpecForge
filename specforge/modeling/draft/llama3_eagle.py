@@ -666,7 +666,7 @@ class LlamaAttention(nn.Module):
         else:
             lck = len(cache_hidden[0])
             if isinstance(self.rotary_emb, LlamaMutiRotaryEmbedding):
-                cos, sin = self.rotary_emb(query_states, position_ids + lck)
+                cos, sin = self.rotary_emb(query_states, position_ids + lck) # + lck == 1 token shift * lck times.
                 cos, sin = cos.to(query_states.device), sin.to(query_states.device)
                 query_states, key_states = apply_multimodal_rotary_pos_emb(
                     query_states,
@@ -685,12 +685,13 @@ class LlamaAttention(nn.Module):
             key_states = repeat_kv(key_states, self.num_key_value_groups)
             value_states = repeat_kv(value_states, self.num_key_value_groups)
 
+            # Write to cache.
             cache_hidden[0] = cache_hidden[0] + [key_states]
             cache_hidden[1] = cache_hidden[1] + [value_states]
 
             cache_k = cache_hidden[0]
             cache_v = cache_hidden[1]
-
+            # initial input from target. size: input length.
             k0 = cache_k[0]
             v0 = cache_v[0]
 
@@ -699,7 +700,6 @@ class LlamaAttention(nn.Module):
                 self.head_dim
             )
             lck = len(cache_k)
-
             attn_weights = attn_weights + attention_mask
 
             for i in range(1, lck):
