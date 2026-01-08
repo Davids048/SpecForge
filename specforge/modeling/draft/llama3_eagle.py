@@ -1433,10 +1433,11 @@ class LlamaForCausalLMEagle3(Eagle3DraftModel):
         past_key_values: Optional[Cache] = None,
         use_cache: bool = True,
     ) -> torch.Tensor:
+        static_hidden_states = hidden_states
         for layer in self.midlayer:
             hidden_states = layer(
                 input_emb=input_embeds,
-                hidden_states=hidden_states,
+                hidden_states=static_hidden_states, # <--- this should be static input hidden states.
                 cache_hidden=cache_hidden,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
