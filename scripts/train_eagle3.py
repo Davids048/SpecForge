@@ -21,6 +21,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from specforge import (
     AutoDraftModelConfig,
     AutoEagle3DraftModel,
+    AutoJacobiDraftModel,
     OnlineEagle3Model,
     QwenVLOnlineEagle3Model,
 )
@@ -91,6 +92,11 @@ def parse_args() -> Tuple[ArgumentParser, Namespace]:
         default="sglang",
         choices=["sglang", "hf", "custom"],
         help="The backend of the target model",
+    )
+    model_group.add_argument(
+        "--is-jacobi",
+        action="store_true",
+        help="Whether the draft model is jacobi model",
     )
 
     # dataset arguments
@@ -347,6 +353,7 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
     else:
         # Use provided config file
         draft_model_config = AutoDraftModelConfig.from_file(args.draft_model_config)
+        print(f"{draft_model_config=}")
 
     # Handle base ckpt, config file
     draft_model_last_checkpoint = None
@@ -366,18 +373,33 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
         draft_model_last_checkpoint = get_last_checkpoint(args.output_dir)
         print_on_rank0(f"Last checkpoint detected: {draft_model_last_checkpoint}")
 
-    if draft_model_last_checkpoint:
-        draft_model = AutoEagle3DraftModel.from_pretrained(
-            draft_model_last_checkpoint,
-            attention_backend=args.attention_backend,
-            torch_dtype=torch.bfloat16,
-        ).cuda()
+    if args.is_jacobi:
+        assert "LlamaForCausalLMJacobi" in draft_model_config.architectures
+        if draft_model_last_checkpoint:
+            draft_model = AutoJacobiDraftModel.from_pretrained(
+                draft_model_last_checkpoint,
+                attention_backend=args.attention_backend,
+                torch_dtype=torch.bfloat16,
+            ).cuda()
+        else:
+            draft_model = AutoJacobiDraftModel.from_config(
+                draft_model_config,
+                attention_backend=args.attention_backend,
+                torch_dtype=torch.bfloat16,
+            ).cuda()
     else:
-        draft_model = AutoEagle3DraftModel.from_config(
-            draft_model_config,
-            attention_backend=args.attention_backend,
-            torch_dtype=torch.bfloat16,
-        ).cuda()
+        if draft_model_last_checkpoint:
+            draft_model = AutoEagle3DraftModel.from_pretrained(
+                draft_model_last_checkpoint,
+                attention_backend=args.attention_backend,
+                torch_dtype=torch.bfloat16,
+            ).cuda()
+        else:
+            draft_model = AutoEagle3DraftModel.from_config(
+                draft_model_config,
+                attention_backend=args.attention_backend,
+                torch_dtype=torch.bfloat16,
+            ).cuda()
 
     draft_model.load_embedding(args.target_model_path, embedding_key=args.embedding_key)
     draft_model.freeze_embedding()
@@ -693,6 +715,8 @@ def main():
             length=args.ttt_length,
             attention_backend=args.attention_backend,
         )
+    elif args.is_jacobi:
+        raise NotImplementedError("Continue here.")
     else:
         eagle3_model = OnlineEagle3Model(
             draft_model=draft_model,

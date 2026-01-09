@@ -19,6 +19,7 @@ from transformers import (
 )
 
 from .draft.llama3_eagle import LlamaForCausalLMEagle3
+from .draft.llama3_jacobi import LlamaForCausalLMJacobi
 from .target.custom_backend import (
     GptOssForCausalLM,
     Llama4ForCausalLM,
@@ -28,6 +29,61 @@ from .target.custom_backend import (
     Qwen3ForCausalLM,
     Qwen3MoeForCausalLM,
 )
+
+
+# Copied from AutoEagle3DraftModel
+class AutoJacobiDraftModel(AutoModelForCausalLMBase):
+    # the model mapping is currently hardcoded, we should support lazy model mapping via registry
+    _model_mapping = {
+        LlamaConfig: LlamaForCausalLMJacobi,
+    }
+
+    @classmethod
+    def from_config(cls, config: PretrainedConfig, torch_dtype=None, **config_kwargs):
+        """
+        This class method takes a configuration object and create its model based on the
+        _model_mapping class variable.
+
+        Args:
+            config (PretrainedConfig): A configuration object.
+
+        Returns:
+            A model instance.
+        """
+        # get the model class from the
+        _model_cls = cls._model_mapping[type(config)]
+        model = _model_cls(config, **config_kwargs)
+
+        # Convert model to specified dtype if provided
+        if torch_dtype is not None:
+            model = model.to(dtype=torch_dtype)
+        return model
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: Union[str, os.PathLike[str]],
+        *model_args,
+        **kwargs,
+    ):
+        original_warn = modeling_utils.logger.warning
+
+        def filtered_warning(msg):
+            if "embed_tokens.weight" in str(msg) and "initialized" in str(msg):
+                return
+            original_warn(msg)
+
+        modeling_utils.logger.warning = filtered_warning
+
+        try:
+            model = super().from_pretrained(
+                pretrained_model_name_or_path, *model_args, **kwargs
+            )
+        finally:
+            modeling_utils.logger.warning = original_warn
+
+        return model
+
 
 
 class AutoEagle3DraftModel(AutoModelForCausalLMBase):
@@ -133,6 +189,7 @@ class AutoDraftModelConfig:
 
     _config_mapping = {
         "LlamaForCausalLMEagle3": LlamaConfig,
+        "LlamaForCausalLMJacobi": LlamaConfig,
     }
 
     @classmethod
