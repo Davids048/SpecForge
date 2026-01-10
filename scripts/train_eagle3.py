@@ -24,6 +24,7 @@ from specforge import (
     AutoJacobiDraftModel,
     OnlineEagle3Model,
     QwenVLOnlineEagle3Model,
+    OnlineJacobiModel,
 )
 from specforge.args import SGLangBackendArgs, TrackerArgs
 from specforge.data import (
@@ -716,7 +717,11 @@ def main():
             attention_backend=args.attention_backend,
         )
     elif args.is_jacobi:
-        raise NotImplementedError("Continue here.")
+        eagle3_model = OnlineJacobiModel(
+            draft_model=draft_model,
+            length=args.ttt_length,
+            attention_backend=args.attention_backend,
+        )
     else:
         eagle3_model = OnlineEagle3Model(
             draft_model=draft_model,

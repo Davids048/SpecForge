@@ -4,19 +4,22 @@ from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.cache_utils import Cache
 import torch.nn as nn
 
-from .base import Eagle3DraftModel
+from .base import JacobiDraftModel
 from .llama3_eagle import (
     LlamaDecoderLayer,
     LlamaRMSNorm,
 )
 
-# TODO: Change this to use Jacobi's own draft model.
-# The base model defines:
-# -prepare mask
-# - freeze embedding
-# - load embedding
-# - load vocab mapping
-class LlamaForCausalLMJacobi(Eagle3DraftModel):
+class JacobiAttention(nn.Module):
+    # TODO: Add jacobi attention, which should take a context, target hidden, and the current block's hidden
+    # and the other things.
+    pass
+class JacobiDecoderLayer(nn.Module):
+    # TODO: Add the layer.
+    pass
+
+
+class LlamaForCausalLMJacobi(JacobiDraftModel):
     config_class = LlamaConfig
     def __init__(self, config, quant_config=None, attention_backend="sdpa") -> None:
         super().__init__(config)
@@ -28,9 +31,8 @@ class LlamaForCausalLMJacobi(Eagle3DraftModel):
             config.vocab_size, config.hidden_size, config.pad_token_id
         )
         num_layers = getattr(config, 'num_hidden_layers', 1)
-        # TODO: CHANGE to use jacobi parallel decodeer layer.
         self.midlayer = nn.ModuleList([
-            LlamaDecoderLayer(config, attention_backend=attention_backend)
+            JacobiDecoderLayer()
             for _ in range(num_layers)
         ])
 
@@ -60,19 +62,24 @@ class LlamaForCausalLMJacobi(Eagle3DraftModel):
         """
         Placeholder: Embed the input ids.
         """
-        raise NotImplementedError("embed_input_ids not yet implemented for Jacobi model")
+        return self.embed_tokens(input_ids)
 
     def project_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
         Placeholder: Project the concatenated hidden states from the high, medium and low layers to the target hidden size.
         """
-        raise NotImplementedError("project_hidden_states not yet implemented for Jacobi model")
+        # eagle 3 requires hidden states from 3 layers
+        # TODO: Make this a dynamic (accept more than 3 hidden layer features)
+        assert hidden_states.size(-1) == self.config.hidden_size * 3
+        return self.fc(hidden_states)
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
         Placeholder: Compute the logits of the draft model.
         """
-        raise NotImplementedError("compute_logits not yet implemented for Jacobi model")
+        # raise NotImplementedError("compute_logits not yet implemented for Jacobi model.")
+        norm_hidden_states = self.norm(hidden_states)
+        return self.lm_head(norm_hidden_states)
 
     def backbone(
         self,
@@ -87,4 +94,5 @@ class LlamaForCausalLMJacobi(Eagle3DraftModel):
         """
         Placeholder: The backbone of the draft model.
         """
+
         raise NotImplementedError("backbone not yet implemented for Jacobi model")

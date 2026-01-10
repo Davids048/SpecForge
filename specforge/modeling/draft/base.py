@@ -187,3 +187,6 @@ class Eagle3DraftModel(PreTrainedModel, ABC):
         self.t2d.copy_(vocab_mapping["t2d"])
         self.d2t.copy_(vocab_mapping["d2t"])
         self.vocab_mapping_loaded = True
+
+class JacobiDraftModel(Eagle3DraftModel):
+    pass
