@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from transformers.cache_utils import DynamicCache
 from yunchang import EXTRACT_FUNC_DICT
 
-from specforge.core.loss import LogSoftmaxLoss
+from specforge.core.loss import LogSoftmaxLoss, _compute_loss
 from specforge.distributed import (
     gather_outputs_and_unpad,
     get_sp_ring_group,
@@ -86,6 +86,24 @@ class OnlineJacobiModel(JacobiModel):
         position_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+        # DEBUG: Override inputs with simple test data
+        DEBUG_TEST = os.getenv("DEBUG", False)
+        if DEBUG_TEST:
+            device = hidden_states.device
+            dtype = hidden_states.dtype
+            batch_size = hidden_states.shape[0]
+            debug_seq_len = 7
+            vocab_size = target.shape[-1]
+            hidden_dim = hidden_states.shape[-1]  # num_target_layers * hidden_size
+
+            input_ids = torch.arange(1, debug_seq_len + 1, device=device).unsqueeze(0).expand(batch_size, -1)
+            attention_mask = torch.ones(batch_size, debug_seq_len, device=device)
+            loss_mask = torch.ones(batch_size, debug_seq_len, 1, device=device)
+            hidden_states = torch.randn(batch_size, debug_seq_len, hidden_dim, device=device, dtype=dtype)
+            target = torch.randn(batch_size, debug_seq_len, vocab_size, device=device, dtype=dtype)
+            target = F.softmax(target, dim=-1)  # make it a valid probability distribution
+            print(f"DEBUG: input_ids={input_ids}, seq_len={debug_seq_len}, hidden_dim={hidden_dim}, vocab={vocab_size}, {loss_mask=}")
+
         # Step 1: handle vocab size
         target_p_padded, position_mask = _compute_target_p_padded(
             target=target,
@@ -114,10 +132,7 @@ class OnlineJacobiModel(JacobiModel):
         seq_length_with_past = seq_length
         past_key_values_length = 0
 
-        # Step 2: project the concatenated hidden states to the target hidden size
-        hidden_states = self.draft_model.project_hidden_states(hidden_states)
-
-        # Step 3: process kv cache, position ids and position ids
+        # Step 2: process kv cache, position ids and position ids
         if past_key_values is not None:
             past_key_values_length = past_key_values[0][0].shape[2]
             seq_length_with_past = seq_length_with_past + past_key_values_length
@@ -178,20 +193,24 @@ class OnlineJacobiModel(JacobiModel):
 
             # Convert to embeddings
             block_embeds = self.draft_model.embed_input_ids(block_input_ids)  # [batch, block_len, hidden]
+            block_embeds = block_embeds.to(context_hidden.dtype)
 
-            # Position ids for the block: train_pos to train_pos + block_len - 1
+            # Position ids: need full range [0, ctx_len + block_len) for rotary embeddings
+            # (context K/V use positions 0..ctx_len-1, block K/V use positions ctx_len..ctx_len+block_len-1)
             ctx_len = train_pos + 1
-            block_position_ids = torch.arange(
-                train_pos, train_pos + block_len, device=device
+            full_position_ids = torch.arange(
+                0, ctx_len + block_len, device=device
             ).unsqueeze(0).expand(batch_size, -1)
 
-            # Forward through draft model (placeholder - returns dummy logits)
-            # TODO: call self.draft_model.backbone(...) with proper args
-            draft_logits = torch.zeros(
-                batch_size, block_len, self.draft_model.draft_vocab_size,
-                device=device,
-                requires_grad=True,
-            )[:, 1:, :]
+            # Forward through draft model
+            draft_output = self.draft_model.forward(
+                position_ids=full_position_ids,
+                noise_embedding=block_embeds,
+                target_hidden=context_hidden,  # unprojected [batch, ctx_len, num_target_layers * hidden]
+                attention_mask=None,  # DFlash attention handles its own masking
+                use_cache=False,
+            )
+            draft_logits = self.draft_model.compute_logits(draft_output)[:, 1:, :]  # skip seed token
 
             # Collect logits for each prediction position
             for pred_pos in range(self.length):
@@ -206,8 +225,12 @@ class OnlineJacobiModel(JacobiModel):
             target_p = target_p_padded[:, pred_pos : pred_pos + seq_length, :]  # [batch, num_train_pos, vocab]
             pos_mask = position_mask_padded[:, pred_pos : pred_pos + seq_length, :]  # [batch, num_train_pos, 1]
 
-            # Compute loss and accuracy using existing functions
-            loss = LogSoftmaxLoss.apply(logits, target_p, pos_mask)
+            # Compute loss - use PyTorch fallback for large vocab (Triton limit is 65536)
+            vocab_size = logits.shape[-1]
+            if vocab_size > 65536:
+                loss = _compute_loss(logits, target_p, pos_mask)
+            else:
+                loss = LogSoftmaxLoss.apply(logits, target_p, pos_mask)
             plosses.append(loss)
 
             with torch.no_grad():
