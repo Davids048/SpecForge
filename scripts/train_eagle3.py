@@ -40,6 +40,7 @@ from specforge.distributed import (
     get_tp_group,
     init_distributed,
 )
+from specforge.modeling.draft.qwen3_jacobi import Qwen3ForCausalLMJacobi
 from specforge.modeling.target import (
     Eagle3TargetModel,
     TargetHead,
@@ -157,7 +158,7 @@ def parse_args() -> Tuple[ArgumentParser, Namespace]:
     training_group.add_argument(
         "--log-interval",
         type=int,
-        default=50,
+        default=10,
         help="Log training metrics every N steps",
     )
     training_group.add_argument("--seed", type=int, default=0)
@@ -375,7 +376,6 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
         print_on_rank0(f"Last checkpoint detected: {draft_model_last_checkpoint}")
 
     if args.is_jacobi:
-        assert "LlamaForCausalLMJacobi" in draft_model_config.architectures
         if draft_model_last_checkpoint:
             draft_model = AutoJacobiDraftModel.from_pretrained(
                 draft_model_last_checkpoint,
@@ -404,6 +404,10 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
 
     draft_model.load_embedding(args.target_model_path, embedding_key=args.embedding_key)
     draft_model.freeze_embedding()
+    if args.is_jacobi:
+        print("Loading target model LMHead into draft model...")
+        draft_model.load_lm_head(args.target_model_path, lm_head_key="lm_head.weight")
+        draft_model.freeze_lm_head()
     return draft_model_config, draft_model
 
 
@@ -717,6 +721,8 @@ def main():
             attention_backend=args.attention_backend,
         )
     elif args.is_jacobi:
+        assert isinstance(draft_model, Qwen3ForCausalLMJacobi)
+        args.ttt_length = draft_model.block_size - 1  # prediction length is decided by block size.
         eagle3_model = OnlineJacobiModel(
             draft_model=draft_model,
             length=args.ttt_length,

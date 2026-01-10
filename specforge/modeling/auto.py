@@ -19,7 +19,7 @@ from transformers import (
 )
 
 from .draft.llama3_eagle import LlamaForCausalLMEagle3
-from .draft.llama3_jacobi import LlamaForCausalLMJacobi
+from .draft.qwen3_jacobi import Qwen3ForCausalLMJacobi
 from .target.custom_backend import (
     GptOssForCausalLM,
     Llama4ForCausalLM,
@@ -35,7 +35,7 @@ from .target.custom_backend import (
 class AutoJacobiDraftModel(AutoModelForCausalLMBase):
     # the model mapping is currently hardcoded, we should support lazy model mapping via registry
     _model_mapping = {
-        LlamaConfig: LlamaForCausalLMJacobi,
+        Qwen3Config: Qwen3ForCausalLMJacobi,
     }
 
     @classmethod
@@ -190,6 +190,7 @@ class AutoDraftModelConfig:
     _config_mapping = {
         "LlamaForCausalLMEagle3": LlamaConfig,
         "LlamaForCausalLMJacobi": LlamaConfig,
+        "Qwen3ForCausalLMJacobi": Qwen3Config,
     }
 
     @classmethod

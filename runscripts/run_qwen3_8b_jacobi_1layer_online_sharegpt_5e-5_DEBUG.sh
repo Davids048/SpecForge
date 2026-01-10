@@ -11,7 +11,8 @@ BUILD_DATASET_NUM_PROC=${BUILD_DATASET_NUM_PROC:-64}
 
 mkdir -p $ROOT_DIR/logs
 
-CONFIG_NAME=qwen3-8b-jacobi-1layer
+# CONFIG_NAME=qwen3-8b-jacobi-1layer
+CONFIG_NAME=qwen3-8b-jacobi-1layer-qwen3
 LR=5e-5
 DATA=sharegpt_train
 RUNNAME=$CONFIG_NAME-${DATA}-$LR-DEBUG
