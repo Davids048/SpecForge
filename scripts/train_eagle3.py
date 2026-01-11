@@ -596,7 +596,6 @@ def run_forward(
             # TODO: Print the output from the eagle3 data here.
             if DEBUG_JACOBI:
                 print(f"{input_ids=}")
-            breakpoint()
         else:
             # we generate the logits using the hidden states loaded from disk
             input_ids = data["input_ids"].cuda()
@@ -808,9 +807,6 @@ def main():
             progress_bar = train_dataloader
 
         for data in progress_bar:
-            if data['input_ids'].shape[1] > 100:
-                print(f"\n skipping long sequence for now.")
-                continue
             global_step += 1
 
             # ================================================

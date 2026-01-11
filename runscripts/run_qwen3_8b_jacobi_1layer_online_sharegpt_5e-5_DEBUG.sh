@@ -26,7 +26,7 @@ torchrun \
     $ROOT_DIR/scripts/train_eagle3.py \
     --target-model-path Qwen/Qwen3-8B \
     --draft-model-config $ROOT_DIR/configs/${CONFIG_NAME}.json \
-    --attention-backend sdpa \
+    --attention-backend flex_attention \
     --is-jacobi \
     --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
@@ -46,5 +46,3 @@ torchrun \
     --wandb-name $RUNNAME \
     2>&1 | tee $ROOT_DIR/logs/${RUNNAME}.log
 
-# TODO jacobi: Change to use Flex attention.
-# TODO jacobi: change to report wandb.

@@ -27,6 +27,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers.cache_utils import DynamicCache
+from specforge.modeling.draft.qwen3_jacobi import Qwen3ForCausalLMJacobi
 from yunchang import EXTRACT_FUNC_DICT
 
 from specforge.core.loss import LogSoftmaxLoss, _compute_loss
@@ -47,7 +48,7 @@ class JacobiModel(nn.Module):
 class OnlineJacobiModel(JacobiModel):
     def __init__(
         self,
-        draft_model: JacobiDraftModel,
+        draft_model: Qwen3ForCausalLMJacobi,
         length: int = 7,
         attention_backend="sdpa",
     ):
@@ -87,7 +88,7 @@ class OnlineJacobiModel(JacobiModel):
         **kwargs,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
         # DEBUG: Override inputs with simple test data
-        DEBUG_TEST = os.getenv("DEBUG", False)
+        DEBUG_TEST = os.getenv("DEBUG_JACOBI", False)
         if DEBUG_TEST:
             device = hidden_states.device
             dtype = hidden_states.dtype
@@ -164,7 +165,108 @@ class OnlineJacobiModel(JacobiModel):
                 past_key_values_length=past_key_values_length,
             )
 
-        plosses, vlosses, acces = self._seq_drafting(hidden_states, input_ids, target_p_padded, seq_length, batch_size, position_mask_padded, loss_mask_padded)
+        # plosses, vlosses, acces = self._seq_drafting(hidden_states, input_ids, target_p_padded, seq_length, batch_size, position_mask_padded, loss_mask_padded)
+        plosses, vlosses, acces = self._parallel_drafting(
+            hidden_states,
+            input_ids,
+            attention_mask,
+            target_p_padded,
+            position_mask_padded,
+            loss_mask_padded,
+        )
+        return plosses, vlosses, acces
+
+    def _parallel_drafting(
+        self,
+        hidden_states,      # BZ, T, 3 * HZ
+        input_ids,          # BZ, T,
+        attention_mask,
+        target_p_padded,    # BZ, T + self.length, V
+        position_mask_padded,   # BZ, T + self.length, 1
+        loss_mask_padded,   # BZ, T + self.length, 1
+    ):
+        """
+        hidden states: features from the target model, used to produce logits at each position.
+        N: training sample length
+        hidden:
+            hb0 hb1 hb2 ... hb(N-1)
+        input_ids: token produced by hidden states at the same position.
+            0, 1, 2, ... N-1
+        target_p:  logits produced after forwarding the token at the same position.
+
+        in dflash: hidden acts as context, input ids are forwarded together with the masked tokens, and the target p is
+        used to verify.
+
+        """
+        batch_size, input_len, _ = hidden_states.shape
+        device = hidden_states.device
+        dtype = hidden_states.dtype
+        vocab_size = self.draft_model.vocab_size
+
+        plosses = []
+        vlosses = []
+        acces = []
+
+        past_key_values = DynamicCache()
+        for idx in range(self.length + 2):
+            if idx == 0:
+                # forward context section to store the target context.
+                target_hidden = self.draft_model.project_hidden_states(hidden_states) # hidden from N target layers --> 1 hidden.
+                noise_embedding = None
+            elif idx == 1:
+                # forward the first token in each block (which is the target produced free token)
+                target_hidden = None
+                noise_embedding = self.draft_model.embed_input_ids(input_ids).to(dtype)
+            else:
+                target_hidden = None
+                noise_ids = torch.randint(0, vocab_size, input_ids.shape, device=device, dtype=input_ids.dtype)
+                noise_embedding = self.draft_model.embed_input_ids(noise_ids).to(dtype)
+
+            position_ids = torch.arange(0, input_len, device=device).unsqueeze(0).expand(batch_size, -1) + idx
+
+            # Forward through draft model (placeholder)
+            draft_output = self.draft_model.parallel_forward(
+                target_hidden,
+                noise_embedding,
+                position_ids,
+                attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+            )
+
+            if idx <= 1:
+                # First 2 iterations forward only the input ids to store in cache. no prediction performed. No loss calculated.
+                continue
+            assert draft_output is not None
+            # Compute logits
+            draft_logits = self.draft_model.compute_logits(draft_output)
+
+            # target_p from idx to idx + input_len
+            pred_pos = idx - 2
+            target_p = target_p_padded[:, pred_pos : pred_pos + input_len, :]
+            position_mask = position_mask_padded[:, pred_pos : pred_pos + input_len, :]
+            loss_mask = loss_mask_padded[:, pred_pos : pred_pos + input_len, :]
+            logits = gather_outputs_and_unpad(draft_logits, gather_dim=1)
+
+            # Step 5.5: record metrics first as we in-place modify logits
+            with torch.no_grad():
+                acces.append(
+                    _compute_metric_acc(
+                        logits=logits,
+                        target_p=target_p,
+                        position_mask=position_mask,
+                        loss_mask=loss_mask,
+                    )
+                )
+
+            # Step 5.6: calculate loss, in-place modifies logits!
+            vocab_size = logits.shape[-1]
+            if vocab_size > 65536:
+                loss = _compute_loss(logits, target_p, position_mask)
+            else:
+                loss = LogSoftmaxLoss.apply(logits, target_p, position_mask)
+            plosses.append(loss)
+
         return plosses, vlosses, acces
 
     def _seq_drafting(
