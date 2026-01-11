@@ -164,7 +164,19 @@ class OnlineJacobiModel(JacobiModel):
                 past_key_values_length=past_key_values_length,
             )
 
+        plosses, vlosses, acces = self._seq_drafting(hidden_states, input_ids, target_p_padded, seq_length, batch_size, position_mask_padded, loss_mask_padded)
+        return plosses, vlosses, acces
 
+    def _seq_drafting(
+        self,
+        hidden_states,
+        input_ids,
+        target_p_padded,
+        seq_length,
+        batch_size,
+        position_mask_padded,
+        loss_mask_padded,
+    ):
         # Step 5. Perform parallel drafting training
         # block = [seed_token, M, M, ...] with self.length tokens to predict
         block_len = self.length + 1
@@ -237,5 +249,4 @@ class OnlineJacobiModel(JacobiModel):
                 cur_loss_mask = loss_mask_padded[:, pred_pos : pred_pos + seq_length, :]
                 acc = _compute_metric_acc(logits, target_p, pos_mask, cur_loss_mask)
                 acces.append(acc)
-
         return plosses, vlosses, acces

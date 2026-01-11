@@ -565,11 +565,26 @@ def run_forward(
         )
     else:
         if is_online:
+            # DEBUG: Override input with simple test data
+            DEBUG_JACOBI = os.getenv("DEBUG_JACOBI", False)
+            if DEBUG_JACOBI:
+                device = data["input_ids"].cuda().device
+                debug_seq_len = 7
+                batch_size = data["input_ids"].shape[0]
+                debug_input_ids = torch.arange(1, debug_seq_len + 1, device=device).unsqueeze(0).expand(batch_size, -1)
+                debug_attention_mask = torch.ones(batch_size, debug_seq_len, device=device, dtype=torch.long)
+                debug_loss_mask = torch.ones(batch_size, debug_seq_len, 1, device=device)
+                print(f"DEBUG_JACOBI: input_ids={debug_input_ids}")
+            else:
+                debug_input_ids = data["input_ids"].cuda()
+                debug_attention_mask = data["attention_mask"].cuda()
+                debug_loss_mask = data["loss_mask"].cuda()
+
             # we generate the eagle3 using the target model in an online fashion
             eagle3_data = target_model.generate_eagle3_data(
-                input_ids=data["input_ids"].cuda(),
-                attention_mask=data["attention_mask"].cuda(),
-                loss_mask=data["loss_mask"].cuda(),
+                input_ids=debug_input_ids,
+                attention_mask=debug_attention_mask,
+                loss_mask=debug_loss_mask,
             )
 
             input_ids = get_dp_data_shard_from_tp(eagle3_data.input_ids)
@@ -577,6 +592,11 @@ def run_forward(
             loss_mask = get_dp_data_shard_from_tp(eagle3_data.loss_mask)
             target = get_dp_data_shard_from_tp(eagle3_data.target)
             hidden_states = get_dp_data_shard_from_tp(eagle3_data.hidden_states)
+
+            # TODO: Print the output from the eagle3 data here.
+            if DEBUG_JACOBI:
+                print(f"{input_ids=}")
+            breakpoint()
         else:
             # we generate the logits using the hidden states loaded from disk
             input_ids = data["input_ids"].cuda()
@@ -788,6 +808,9 @@ def main():
             progress_bar = train_dataloader
 
         for data in progress_bar:
+            if data['input_ids'].shape[1] > 100:
+                print(f"\n skipping long sequence for now.")
+                continue
             global_step += 1
 
             # ================================================
