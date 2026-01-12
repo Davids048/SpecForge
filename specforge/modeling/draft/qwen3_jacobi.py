@@ -295,16 +295,25 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
             config.vocab_size, config.hidden_size, config.pad_token_id
         )
         self.num_layers = getattr(config, 'num_hidden_layers', 1)
-        self.num_target_layers = getattr(config, 'num_target_layers', 3)
+        self.num_target_layers = getattr(config, 'num_target_layers', -1)
+        self.num_aux_layers = getattr(config, "num_aux_layers", 3)
         self.layers = nn.ModuleList(
             [Qwen3DFlashDecoderLayer(config, layer_idx, attention_backend) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.target_layer_ids = build_target_layer_ids(config.num_target_layers, config.num_hidden_layers)
+
+        self.target_layer_ids = build_target_layer_ids(config.num_target_layers, config.num_aux_layers)
+        print(f"=====Jacobi target feature config=======")
+        print(f"{self.num_layers=}")
+        print(f"{self.num_target_layers=}")
+        print(f"{self.num_aux_layers=}")
+        print(f"{self.target_layer_ids=}")
+        print(f"========================================")
+
+
         self.norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen3RotaryEmbedding(config)
-        # Use num_target_layers directly (not len(target_layer_ids)) since target always extracts 3 layers
         # TODO: (ds8) Change this to use dynamic target layer size.
-        self.fc = nn.Linear(self.num_target_layers * config.hidden_size, config.hidden_size, bias=False)
+        self.fc = nn.Linear(self.num_aux_layers * config.hidden_size, config.hidden_size, bias=False)
         self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.block_size = config.block_size
         # lm_head uses full vocab size - weights loaded from target model
@@ -354,7 +363,7 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
 
     def project_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # eagle 3 requires hidden states from 3 layers
-        assert hidden_states.size(-1) == self.config.hidden_size * self.num_target_layers
+        assert hidden_states.size(-1) == self.config.hidden_size * self.num_aux_layers
         return self.norm(self.fc(hidden_states))
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
