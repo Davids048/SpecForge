@@ -12,10 +12,10 @@ BUILD_DATASET_NUM_PROC=${BUILD_DATASET_NUM_PROC:-64}
 mkdir -p $ROOT_DIR/logs
 
 # CONFIG_NAME=qwen3-8b-jacobi-1layer
-CONFIG_NAME=qwen3-8b-jacobi-1layer-qwen3
-LR=5e-5
+CONFIG_NAME=qwen3-8b-jacobi-3layer-qwen3-5target
+LR=1e-4
 DATA=sharegpt_train
-RUNNAME=$CONFIG_NAME-${DATA}-$LR-DEBUG
+RUNNAME=$CONFIG_NAME-${DATA}-$LR
 echo "====================RUN====================="
 echo $RUNNAME
 echo "============================================"
@@ -40,8 +40,9 @@ torchrun \
     --embedding-key model.embed_tokens.weight \
     --tp-size $TP_SIZE \
     --target-model-backend sglang \
-    --save-interval 999999999 \
-    --report-to none \
+    --save-interval 5000 \
+    --eval-interval 500 \
+    --report-to wandb \
     --wandb-project specforge \
     --wandb-name $RUNNAME \
     2>&1 | tee $ROOT_DIR/logs/${RUNNAME}.log

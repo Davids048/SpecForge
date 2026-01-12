@@ -5,17 +5,20 @@ ROOT_DIR=$(dirname $SCRIPT_DIR)
 export TORCHINDUCTOR_CACHE_DIR=$ROOT_DIR/cache/compiled_kernels
 
 # support tp8 train eagle3 for Qwen3-4B/8B/32B up to tp_size = 8
-NUM_GPUS=${1:-1}
+NUM_GPUS=${1:-4}
 TP_SIZE=${2:-1}
 BUILD_DATASET_NUM_PROC=${BUILD_DATASET_NUM_PROC:-64}
 
 mkdir -p $ROOT_DIR/logs
 
-CONFIG_NAME=qwen3-8b-eagle3-5layer
+# CONFIG_NAME=qwen3-8b-jacobi-1layer
+CONFIG_NAME=qwen3-8b-jacobi-5layer-qwen3-5target
 LR=1e-4
 DATA=sharegpt_train
-RUNNAME=$CONFIG_NAME-${DATA}-$LR-DEBUG
+RUNNAME=$CONFIG_NAME-${DATA}-$LR
+echo "====================RUN====================="
 echo $RUNNAME
+echo "============================================"
 
 torchrun \
     --standalone \
@@ -23,6 +26,8 @@ torchrun \
     $ROOT_DIR/scripts/train_eagle3.py \
     --target-model-path Qwen/Qwen3-8B \
     --draft-model-config $ROOT_DIR/configs/${CONFIG_NAME}.json \
+    --attention-backend flex_attention \
+    --is-jacobi \
     --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
     --output-dir $ROOT_DIR/outputs/$RUNNAME \
@@ -35,8 +40,10 @@ torchrun \
     --embedding-key model.embed_tokens.weight \
     --tp-size $TP_SIZE \
     --target-model-backend sglang \
-    --save-interval 999999999 \
-    --report-to none \
+    --save-interval 5000 \
+    --eval-interval 500 \
+    --report-to wandb \
     --wandb-project specforge \
     --wandb-name $RUNNAME \
     2>&1 | tee $ROOT_DIR/logs/${RUNNAME}.log
+
