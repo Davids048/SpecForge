@@ -294,6 +294,7 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, config.pad_token_id
         )
+        self.mask_token_id = None
         self.num_layers = getattr(config, 'num_hidden_layers', 1)
         self.num_target_layers = getattr(config, 'num_target_layers', -1)
         self.num_aux_layers = getattr(config, "num_aux_layers", 3)
@@ -330,6 +331,9 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
         d2t = torch.zeros(self.draft_vocab_size, dtype=torch.int64)
         self.register_buffer("t2d", t2d)
         self.register_buffer("d2t", d2t)
+
+    def set_mask_token_id(self, mask_token_id: int):
+        self.mask_token_id = mask_token_id
 
     def forward(
         self,

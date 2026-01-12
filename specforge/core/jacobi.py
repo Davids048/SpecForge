@@ -219,7 +219,12 @@ class OnlineJacobiModel(JacobiModel):
                 noise_embedding = self.draft_model.embed_input_ids(input_ids).to(dtype)
             else:
                 target_hidden = None
-                noise_ids = torch.randint(0, vocab_size, input_ids.shape, device=device, dtype=input_ids.dtype)
+                noise_ids = torch.full(
+                    input_ids.shape,
+                    self.draft_model.mask_token_id,
+                    dtype=input_ids.dtype,
+                    device=device,
+                )
                 noise_embedding = self.draft_model.embed_input_ids(noise_ids).to(dtype)
 
             position_ids = torch.arange(0, input_len, device=device).unsqueeze(0).expand(batch_size, -1) + idx

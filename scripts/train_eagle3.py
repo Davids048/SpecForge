@@ -388,6 +388,11 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
                 attention_backend=args.attention_backend,
                 torch_dtype=torch.bfloat16,
             ).cuda()
+
+        # Add a special token for the mask token.
+        tokenizer = AutoTokenizer.from_pretrained(args.target_model_path)
+        tokenizer.add_special_tokens({"mask_token": "<|MASK|>"})
+        draft_model.set_mask_token_id(tokenizer.mask_token_id)
     else:
         if draft_model_last_checkpoint:
             draft_model = AutoEagle3DraftModel.from_pretrained(
