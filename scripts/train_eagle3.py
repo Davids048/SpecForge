@@ -625,7 +625,7 @@ def run_forward(
 def run_backward_and_update(
     args: Namespace, plosses: List[torch.Tensor], optimizer: Optimizer, global_step: int
 ) -> None:
-    ploss_weight = [i for i in range(len(plosses))]
+    ploss_weight = [0.95**i for i in range(len(plosses))]
     ploss = (
         sum([ploss_weight[i] * plosses[i] for i in range(len(plosses))])
         / args.draft_accumulation_steps
