@@ -1,4 +1,5 @@
 from typing import Optional, Callable
+from accelerate.state import parse_flag_from_env
 from typing_extensions import Unpack, Tuple
 import torch
 from torch import nn
@@ -24,6 +25,7 @@ from specforge.modeling.draft.flex_attention import (
     compile_friendly_create_block_mask,
     compile_friendly_flex_attention,
     generate_eagle3_mask,
+    generate_one_step_jacobi_mask,
 )
 
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
@@ -219,6 +221,94 @@ class Qwen3JacobiFlexAttention(Qwen3AttentionBase):
         attn_output = self.o_proj(attn_output)
         return (attn_output,)
 
+class Qwen3JacobiFlexAttentionOneStep(Qwen3AttentionBase):
+    def forward(
+        self,
+        hidden_states: Optional[torch.Tensor],
+        target_hidden: Optional[torch.Tensor],
+        position_ids: torch.Tensor,
+        position_embeddings: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        past_key_values: Optional[Cache] = None,
+        **kwargs: Unpack[FlashAttentionKwargs],
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # Concatenate target_hidden (context) and hidden_states (seed + mask tokens)
+        # target_hidden: [bsz, input_len, hidden_size] (already projected from multi-layer features)
+        # hidden_states: [bsz, input_len * (length+1), hidden_size] (seed + mask embeddings)
+        forward_hidden = torch.cat([target_hidden, hidden_states], dim=1)
+        bsz, total_len, _ = forward_hidden.size()
+
+        # Determine input_len (Q_LEN) and number of blocks
+        input_len = target_hidden.shape[1]
+        num_blocks = total_len // input_len  # Should be self.length + 2
+
+        # Project Q, K, V
+        query_states = self.q_proj(forward_hidden)
+        key_states = self.k_proj(forward_hidden)
+        value_states = self.v_proj(forward_hidden)
+
+        # Reshape and normalize Q, K
+        query_states = query_states.view(
+            bsz, total_len, self.num_attention_heads, self.head_dim
+        )
+        query_states = self.q_norm(query_states).transpose(1, 2)
+
+        key_states = key_states.view(
+            bsz, total_len, self.num_key_value_heads, self.head_dim
+        )
+        key_states = self.k_norm(key_states).transpose(1, 2)
+
+        # Reshape V
+        value_states = value_states.view(
+            bsz, total_len, self.num_key_value_heads, self.head_dim
+        ).transpose(1, 2)
+
+        # Apply rotary position embeddings
+        cos, sin = position_embeddings
+        cos, sin = cos.to(query_states.device), sin.to(query_states.device)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
+        # Build attention mask using one-step Jacobi mask
+        seq_lengths = attention_mask.sum(dim=-1)
+
+        if total_len <= 128:
+            create_block_mask_func = create_block_mask
+            flex_attention_func = flex_attention
+        else:
+            create_block_mask_func = compile_friendly_create_block_mask
+            flex_attention_func = compile_friendly_flex_attention
+
+        block_mask = create_block_mask_func(
+            mask_mod=generate_one_step_jacobi_mask(
+                seq_lengths=seq_lengths,
+                Q_LEN=input_len,
+                num_blocks=num_blocks,
+            ),
+            B=bsz,
+            H=1,  # Rely on broadcast
+            Q_LEN=total_len,
+            KV_LEN=total_len,
+            device=query_states.device,
+        )
+
+        # Apply flex attention
+        attn_output = flex_attention_func(
+            query=query_states,
+            key=key_states,
+            value=value_states,
+            block_mask=block_mask,
+            enable_gqa=True,
+        )
+
+        # Reshape and project output
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.reshape(bsz, total_len, self.head_dim * self.num_attention_heads)
+        attn_output = self.o_proj(attn_output)
+
+        return (attn_output,)
+
+
+
 
 class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
     def __init__(self, config: Qwen3Config, layer_idx: int, attention_backend="flash_attn"):
@@ -229,6 +319,8 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
             self.self_attn = Qwen3DFlashAttention(config=config, layer_idx=layer_idx)
         elif attention_backend == "flex_attention":
             self.self_attn = Qwen3JacobiFlexAttention(config=config, layer_idx=layer_idx)
+        elif attention_backend == "one_step_flex_attention":
+            self.self_attn = Qwen3JacobiFlexAttentionOneStep(config=config, layer_idx=layer_idx)
         else:
             raise ValueError(f"Unknown attention backend: {attention_backend}")
 
@@ -258,9 +350,10 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
             residual = None
         else:
             residual = hidden_states
+            input_hidden_len = hidden_states.shape[1]
             hidden_states = self.input_layernorm(hidden_states)
 
-        hidden_states = self.self_attn(
+        attn_output = self.self_attn(
             hidden_states=hidden_states,
             target_hidden=target_hidden,
             attention_mask=attention_mask,
@@ -276,7 +369,16 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
         if store_target:
             # this round's input is used as hidden in next layer. we force it to be none to keep forwarding only target hidden.
             return None
-        hidden_states = residual + hidden_states
+
+        # For one-step attention: attn_output includes context block, need to slice it off
+        # attn_output shape: [bsz, input_len * (length+2), hidden_size] if one-step
+        # residual shape: [bsz, input_len * (length+1), hidden_size]
+        if attn_output.shape[1] > input_hidden_len:
+            # Slice off the context block (first input_len positions)
+            context_len = target_hidden.shape[1]
+            attn_output = attn_output[:, context_len:, :]
+
+        hidden_states = residual + attn_output
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
@@ -416,4 +518,49 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
                 position_embeddings=position_embeddings
             )
         return hidden_states
+
+    def one_step_forward(
+        self,
+        target_hidden: torch.Tensor,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        past_key_values: Optional[DynamicCache] = None,
+        use_cache: bool = False,
+    ):
+        """
+        One-step forward pass for Jacobi drafting.
+
+        Processes both context (target_hidden) and block tokens (hidden_states) in a single pass.
+
+        Args:
+            target_hidden: [bsz, input_len, hidden_size] - projected target hidden states (context)
+            hidden_states: [bsz, input_len * (length+1), hidden_size] - seed + mask token embeddings
+            position_ids: [bsz, total_len] - position IDs for all tokens
+            attention_mask: [bsz, input_len] - original attention mask
+
+        Returns:
+            hidden_states: [bsz, input_len * (length+1), hidden_size] - output for non-context positions
+        """
+        # Concatenate for position embeddings calculation
+        # total_forward: [bsz, input_len * (length+2), hidden_size]
+        total_forward = torch.cat([target_hidden, hidden_states], dim=1).detach()
+        position_embeddings = self.rotary_emb(total_forward, position_ids)
+
+        # Forward through all layers
+        # Each layer's attention will concatenate internally and slice off context in residual connection
+        for layer in self.layers:
+            hidden_states = layer(
+                target_hidden=target_hidden,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                position_embeddings=position_embeddings
+            )
+
+        # hidden_states: [bsz, input_len * (length+1), hidden_size] - context already sliced off
+        return hidden_states
+
 

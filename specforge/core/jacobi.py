@@ -165,16 +165,137 @@ class OnlineJacobiModel(JacobiModel):
                 past_key_values_length=past_key_values_length,
             )
 
-        # plosses, vlosses, acces = self._seq_drafting(hidden_states, input_ids, target_p_padded, seq_length, batch_size, position_mask_padded, loss_mask_padded)
-        plosses, vlosses, acces = self._parallel_drafting(
-            hidden_states,
-            input_ids,
-            attention_mask,
-            target_p_padded,
-            position_mask_padded,
-            loss_mask_padded,
-        )
+        # Choose drafting implementation based on attention backend
+        if self.attention_backend == "one_step_flex_attention":
+            plosses, vlosses, acces = self._one_step_drafting(
+                hidden_states,
+                input_ids,
+                attention_mask,
+                target_p_padded,
+                position_mask_padded,
+                loss_mask_padded,
+            )
+        else:
+            # Use sequential parallel_drafting for other backends
+            plosses, vlosses, acces = self._parallel_drafting(
+                hidden_states,
+                input_ids,
+                attention_mask,
+                target_p_padded,
+                position_mask_padded,
+                loss_mask_padded,
+            )
         return plosses, vlosses, acces
+
+    def _one_step_drafting(
+        self,
+        hidden_states,      # BZ, T, 3 * HZ
+        input_ids,          # BZ, T,
+        attention_mask,
+        target_p_padded,    # BZ, T + self.length, V
+        position_mask_padded,   # BZ, T + self.length, 1
+        loss_mask_padded,   # BZ, T + self.length, 1
+    ):
+        """
+        One-step Jacobi drafting that processes all blocks in parallel.
+
+        Block layout after forward:
+        - Block 0 (context): target_hidden - not in output
+        - Block 1 (seed): positions [0:input_len] - free predictions (no loss)
+        - Block 2 (mask1): positions [input_len:2*input_len] - pred_pos=0
+        - Block 3 (mask2): positions [2*input_len:3*input_len] - pred_pos=1
+        - ...
+        - Block length+1: positions [length*input_len:(length+1)*input_len] - pred_pos=length-1
+        """
+        batch_size, input_len, _ = hidden_states.shape
+        device = hidden_states.device
+        dtype = hidden_states.dtype
+        vocab_size = self.draft_model.vocab_size
+
+        plosses = []
+        vlosses = []
+        acces = []
+
+        # Project target hidden states (context)
+        target_hidden = self.draft_model.project_hidden_states(hidden_states)
+
+        # Prepare seed and mask token embeddings
+        seed_embedding = self.draft_model.embed_input_ids(input_ids).to(dtype)
+        noise_ids = torch.full(
+            (batch_size, input_len * self.length),
+            self.draft_model.mask_token_id,
+            dtype=input_ids.dtype,
+            device=device,
+        )
+        noise_embedding = self.draft_model.embed_input_ids(noise_ids).to(dtype)
+
+        # Concatenate embeddings: [seed_embedding | noise_embedding]
+        # Shape: [bsz, input_len * (length+1), hidden_size]
+        block_embedding = torch.cat([seed_embedding, noise_embedding], dim=1)
+
+        # Build position_ids with slot offsets
+        # Each block gets positions offset by its slot index
+        base_pos = torch.arange(0, input_len, device=device).unsqueeze(0).expand(batch_size, -1)
+        position_ids = torch.cat([base_pos + i for i in range(self.length + 2)], dim=1)
+
+        # Forward through draft model in one pass
+        draft_output = self.draft_model.one_step_forward(
+            target_hidden=target_hidden,
+            hidden_states=block_embedding,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=None,
+            use_cache=False,
+        )
+
+        # Compute logits for all positions
+        # Shape: [bsz, input_len * (length+1), vocab_size]
+        draft_logits = self.draft_model.compute_logits(draft_output)
+
+        # Extract predictions for each prediction position and compute losses
+        # Skip block 1 (seed, positions 0:input_len) as it's the free prediction
+        # Process blocks 2 through length+1 (mask tokens)
+        for pred_pos in range(self.length):
+            # Block index: pred_pos + 1 (0=seed, 1=first mask, etc.)
+            # Extract logits for this prediction position
+            block_idx = pred_pos + 1
+            start_pos = block_idx * input_len
+            end_pos = (block_idx + 1) * input_len
+            logits = draft_logits[:, start_pos:end_pos, :]  # [bsz, input_len, vocab_size]
+
+            # Get corresponding targets and masks
+            target_p = target_p_padded[:, pred_pos : pred_pos + input_len, :]
+            position_mask = position_mask_padded[:, pred_pos : pred_pos + input_len, :]
+            loss_mask = loss_mask_padded[:, pred_pos : pred_pos + input_len, :]
+
+            # Gather outputs if using distributed training
+            logits = gather_outputs_and_unpad(logits, gather_dim=1)
+
+            # Compute accuracy (before logits are modified in-place)
+            with torch.no_grad():
+                acces.append(
+                    _compute_metric_acc(
+                        logits=logits,
+                        target_p=target_p,
+                        position_mask=position_mask,
+                        loss_mask=loss_mask,
+                    )
+                )
+
+            # Compute loss (modifies logits in-place)
+            vocab_size = logits.shape[-1]
+            if vocab_size > 65536:
+                loss = _compute_loss(logits, target_p, position_mask)
+            else:
+                loss = LogSoftmaxLoss.apply(logits, target_p, position_mask)
+            plosses.append(loss)
+
+        return plosses, vlosses, acces
+
+
+
+
+
 
     def _parallel_drafting(
         self,
