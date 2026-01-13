@@ -137,16 +137,20 @@ def generate_one_step_jacobi_mask(
     Generate attention mask for one-step Jacobi drafting where all blocks are processed in parallel.
 
     This creates a block-structured attention pattern where:
-    - Block 0 (context): causal attention (if use_causal=True) or full attention (if use_causal=False)
+    - Block 0 (context): ALWAYS causal attention (lower triangular)
     - Blocks 1+ (seed, mask tokens): diagonal attention to same relative position in blocks
 
     Args:
         seq_lengths: Valid sequence lengths per batch
         Q_LEN: Input length per block
         num_blocks: Total number of blocks
-        use_causal: If True (default), use causal attention. If False, use full attention where:
-            - Context block: all positions can see all positions
+        use_causal: If True (default), causal mode. If False, full attention mode where:
+            - Context block: ALWAYS causal (maintains sequential causality)
             - Diagonal blocks: can see ALL future blocks (not just up to current block)
+
+    Note: Context block is always causal regardless of use_causal flag, because context
+    represents sequential input tokens and must maintain causality. The use_causal flag
+    only affects whether diagonal blocks can attend to future blocks.
 
     The mask replicates what _parallel_drafting does iteratively but in a single attention operation.
     """
@@ -166,13 +170,9 @@ def generate_one_step_jacobi_mask(
         effective_seq_len = seq_lengths[b] - padding_offset
 
         # ============ Context block mask ============
-        if use_causal:
-            # Causal: lower triangular attention within context
-            causal_attention = (kv_block == 0) & (q_rel >= kv_rel)
-        else:
-            # Full: all positions in context can see all positions
-            causal_attention = (kv_block == 0)
-
+        # Context block is ALWAYS causal (lower triangular) regardless of use_causal flag
+        # This is because context represents sequential tokens and must maintain causality
+        causal_attention = (kv_block == 0) & (q_rel >= kv_rel)
         causal_padding = (kv_rel < effective_seq_len) & (q_rel < effective_seq_len)
         causal_mask = causal_attention & causal_padding
 
