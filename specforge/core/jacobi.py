@@ -51,17 +51,21 @@ class OnlineJacobiModel(JacobiModel):
         draft_model: Qwen3ForCausalLMJacobi,
         length: int = 7,
         attention_backend="sdpa",
+        use_causal_attention: bool = True,
     ):
         """
         Args:
             target_model: the target model to extract hidden states.
             draft_model: the draft model to be trained.
             length: TTT length, it means how many turns to unroll during TTT.
+            attention_backend: attention implementation to use.
+            use_causal_attention: If True, use causal attention (default). If False, use full attention.
         """
         super().__init__()
         self.draft_model = draft_model
         self.length = length
         self.attention_backend = attention_backend
+        self.use_causal_attention = use_causal_attention
 
         if self.attention_backend == "usp":
             self.extract_func = EXTRACT_FUNC_DICT["basic"]
@@ -246,6 +250,7 @@ class OnlineJacobiModel(JacobiModel):
             attention_mask=attention_mask,
             past_key_values=None,
             use_cache=False,
+            use_causal_attention=self.use_causal_attention,
         )
 
         # Compute logits for all positions

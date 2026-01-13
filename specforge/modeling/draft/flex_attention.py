@@ -130,14 +130,23 @@ def generate_eagle3_mask(
 def generate_one_step_jacobi_mask(
     seq_lengths: torch.Tensor,  # [batch_size], original valid lengths
     Q_LEN: int,                  # input_len per block (e.g., 128)
-    num_blocks: int              # self.length + 2
+    num_blocks: int,             # self.length + 2
+    use_causal: bool = True,     # If True, use causal attention. If False, use full attention.
 ):
     """
     Generate attention mask for one-step Jacobi drafting where all blocks are processed in parallel.
 
     This creates a block-structured attention pattern where:
-    - Block 0 (context): standard causal attention
-    - Blocks 1+ (seed, mask tokens): diagonal attention to same relative position in previous blocks
+    - Block 0 (context): causal attention (if use_causal=True) or full attention (if use_causal=False)
+    - Blocks 1+ (seed, mask tokens): diagonal attention to same relative position in blocks
+
+    Args:
+        seq_lengths: Valid sequence lengths per batch
+        Q_LEN: Input length per block
+        num_blocks: Total number of blocks
+        use_causal: If True (default), use causal attention. If False, use full attention where:
+            - Context block: all positions can see all positions
+            - Diagonal blocks: can see ALL future blocks (not just up to current block)
 
     The mask replicates what _parallel_drafting does iteratively but in a single attention operation.
     """
@@ -156,15 +165,25 @@ def generate_one_step_jacobi_mask(
         padding_offset = torch.clamp(q_block - 1, min=0)
         effective_seq_len = seq_lengths[b] - padding_offset
 
-        # ============ Causal mask (context block) ============
-        # Standard causal attention within the context block
-        causal_attention = (kv_block == 0) & (q_rel >= kv_rel)
+        # ============ Context block mask ============
+        if use_causal:
+            # Causal: lower triangular attention within context
+            causal_attention = (kv_block == 0) & (q_rel >= kv_rel)
+        else:
+            # Full: all positions in context can see all positions
+            causal_attention = (kv_block == 0)
+
         causal_padding = (kv_rel < effective_seq_len) & (q_rel < effective_seq_len)
         causal_mask = causal_attention & causal_padding
 
         # ============ Diagonal mask (suffix blocks) ============
-        # Attend to same relative position in blocks 1..q_block
-        diagonal_attention = (kv_block > 0) & (kv_block <= q_block) & (kv_rel == q_rel)
+        if use_causal:
+            # Causal: only see diagonal in blocks up to current block
+            diagonal_attention = (kv_block > 0) & (kv_block <= q_block) & (kv_rel == q_rel)
+        else:
+            # Full: see diagonal in ALL blocks (including future blocks)
+            diagonal_attention = (kv_block > 0) & (kv_rel == q_rel)
+
         # Key position must be valid in original sequence
         # Query position must be valid in effective (offset-adjusted) sequence
         diagonal_padding = (kv_rel < seq_lengths[b]) & (q_rel < effective_seq_len)
@@ -172,5 +191,5 @@ def generate_one_step_jacobi_mask(
 
         return causal_mask | diagonal_mask
 
-    mask_mod.__name__ = f"one_step_jacobi_Q_{Q_LEN}_blocks_{num_blocks}"
+    mask_mod.__name__ = f"one_step_jacobi_Q_{Q_LEN}_blocks_{num_blocks}_causal_{use_causal}"
     return mask_mod

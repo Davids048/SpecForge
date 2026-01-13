@@ -230,6 +230,7 @@ class Qwen3JacobiFlexAttentionOneStep(Qwen3AttentionBase):
         position_embeddings: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
+        use_causal_attention: bool = True,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         # Concatenate target_hidden (context) and hidden_states (seed + mask tokens)
@@ -283,6 +284,7 @@ class Qwen3JacobiFlexAttentionOneStep(Qwen3AttentionBase):
                 seq_lengths=seq_lengths,
                 Q_LEN=input_len,
                 num_blocks=num_blocks,
+                use_causal=use_causal_attention,
             ),
             B=bsz,
             H=1,  # Rely on broadcast
@@ -339,6 +341,7 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        use_causal_attention: Optional[bool] = True,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]] | None:
         if target_hidden is not None and hidden_states is None:
@@ -363,6 +366,7 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            use_causal_attention=use_causal_attention,
             **kwargs,
         )[0]
 
@@ -527,6 +531,7 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[DynamicCache] = None,
         use_cache: bool = False,
+        use_causal_attention: bool = True,
     ):
         """
         One-step forward pass for Jacobi drafting.
@@ -538,6 +543,7 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
             hidden_states: [bsz, input_len * (length+1), hidden_size] - seed + mask token embeddings
             position_ids: [bsz, total_len] - position IDs for all tokens
             attention_mask: [bsz, input_len] - original attention mask
+            use_causal_attention: If True, use causal attention. If False, use full attention.
 
         Returns:
             hidden_states: [bsz, input_len * (length+1), hidden_size] - output for non-context positions
@@ -557,7 +563,8 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 use_cache=use_cache,
-                position_embeddings=position_embeddings
+                position_embeddings=position_embeddings,
+                use_causal_attention=use_causal_attention,
             )
 
         # hidden_states: [bsz, input_len * (length+1), hidden_size] - context already sliced off

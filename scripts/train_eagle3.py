@@ -100,6 +100,12 @@ def parse_args() -> Tuple[ArgumentParser, Namespace]:
         action="store_true",
         help="Whether the draft model is jacobi model",
     )
+    model_group.add_argument(
+        "--use-causal-attention",
+        type=lambda x: x.lower() == 'true',
+        default=True,
+        help="Whether to use causal attention. Set to 'true' for causal, 'false' for full attention. Only applicable for Jacobi models. Default: true",
+    )
 
     # dataset arguments
     dataset_group = parser.add_argument_group("dataset")
@@ -751,6 +757,7 @@ def main():
             draft_model=draft_model,
             length=args.ttt_length,
             attention_backend=args.attention_backend,
+            use_causal_attention=args.use_causal_attention,
         )
     else:
         eagle3_model = OnlineEagle3Model(
