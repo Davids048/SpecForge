@@ -15,7 +15,8 @@ mkdir -p $ROOT_DIR/logs
 CONFIG_NAME=qwen3-8b-jacobi-5layer-qwen3-5target
 LR=1e-4
 DATA=sharegpt_train
-RUNNAME=$CONFIG_NAME-${DATA}-$LR-onestep-full
+DP=$(( NUM_GPUS / TP_SIZE ))
+RUNNAME=$CONFIG_NAME-${DATA}-$LR-onestep-full-BS$DP
 echo "====================RUN====================="
 echo $RUNNAME
 echo "============================================"
