@@ -12,10 +12,10 @@ BUILD_DATASET_NUM_PROC=${BUILD_DATASET_NUM_PROC:-64}
 mkdir -p $ROOT_DIR/logs
 
 # CONFIG_NAME=qwen3-8b-jacobi-1layer
-CONFIG_NAME=qwen3-8b-jacobi-3layer-qwen3-5target
+CONFIG_NAME=qwen3-8b-jacobi-5layer-qwen3-3target
 LR=1e-4
 DATA=sharegpt_train
-RUNNAME=$CONFIG_NAME-${DATA}-$LR-onestep
+RUNNAME=$CONFIG_NAME-${DATA}-$LR-onestep-full
 echo "====================RUN====================="
 echo $RUNNAME
 echo "============================================"
@@ -28,6 +28,7 @@ torchrun \
     --draft-model-config $ROOT_DIR/configs/${CONFIG_NAME}.json \
     --attention-backend one_step_flex_attention \
     --is-jacobi \
+    --use-causal-attention false \
     --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
     --output-dir $ROOT_DIR/outputs/$RUNNAME \
@@ -42,7 +43,7 @@ torchrun \
     --target-model-backend sglang \
     --save-interval 5000 \
     --eval-interval 500 \
-    --report-to  wandb \
+    --report-to wandb \
     --wandb-project specforge \
     --wandb-name $RUNNAME \
     2>&1 | tee $ROOT_DIR/logs/${RUNNAME}.log
