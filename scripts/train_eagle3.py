@@ -452,6 +452,10 @@ def build_dataloaders(
             processor=processor,
             num_proc=args.build_dataset_num_proc,
         )
+        if args.is_jacobi:
+            vocab_mapping_path = "vocab_mapping_jacobi"
+        else:
+            vocab_mapping_path = "vocab_mapping"
         vocab_mapping_path = generate_vocab_mapping_file(
             dataset=train_eagle3_dataset,
             target_vocab_size=draft_model_config.vocab_size,
