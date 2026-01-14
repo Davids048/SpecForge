@@ -11,26 +11,36 @@ BUILD_DATASET_NUM_PROC=${BUILD_DATASET_NUM_PROC:-64}
 
 mkdir -p $ROOT_DIR/logs
 
+CONFIG_NAME=qwen3-8b-eagle3
+LR=1e-4
+DATA=ultrachat_train
+DP=$(( NUM_GPUS / TP_SIZE ))
+RUNNAME=$CONFIG_NAME-${DATA}-$LR-$DP
+echo "====================RUN====================="
+echo $RUNNAME
+echo "============================================"
+
 torchrun \
     --standalone \
     --nproc_per_node $NUM_GPUS \
     $ROOT_DIR/scripts/train_eagle3.py \
     --target-model-path Qwen/Qwen3-8B \
-    --draft-model-config $ROOT_DIR/configs/qwen3-8b-eagle3-5layer.json \
-    --train-data-path $ROOT_DIR/cache/dataset/sharegpt_train.jsonl \
+    --draft-model-config $ROOT_DIR/configs/${CONFIG_NAME}.json \
+    --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
-    --output-dir $ROOT_DIR/outputs/qwen3-8b-eagle3-5layer-sharegpt-1e-4 \
+    --output-dir $ROOT_DIR/outputs/$RUNNAME \
     --num-epochs 10 \
     --batch-size 1 \
-    --learning-rate 1e-4 \
+    --learning-rate $LR \
     --max-length 4096 \
     --chat-template qwen \
     --cache-dir $ROOT_DIR/cache \
     --embedding-key model.embed_tokens.weight \
     --tp-size $TP_SIZE \
     --target-model-backend sglang \
-    --save-interval 999999999 \
+    --save-interval 5000 \
+    --eval-interval 500 \
     --report-to wandb \
     --wandb-project specforge \
-    --wandb-name qwen3-8b-eagle3-5layer-sharegpt-1e-4 \
-    2>&1 | tee $ROOT_DIR/logs/qwen3-8b-eagle3-5layer-sharegpt-1e-4.log
+    --wandb-name $RUNNAME \
+    2>&1 | tee $ROOT_DIR/logs/${RUNNAME}.log
