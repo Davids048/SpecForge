@@ -324,7 +324,7 @@ def main():
         ds = ds.select(range(args.sample_size))
         print(f"Processing {args.sample_size} samples from the dataset {args.dataset}")
     if args.split_eval:
-        ds = ds.train_test_split(test_size=0.05)
+        ds = ds.train_test_split(test_size=0.01)
         train_ds = ds["train"]
         test_ds = ds["test"]
     else:

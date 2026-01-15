@@ -14,7 +14,7 @@ mkdir -p $ROOT_DIR/logs
 # CONFIG_NAME=qwen3-8b-jacobi-1layer
 CONFIG_NAME=qwen3-8b-jacobi-5layer-qwen3-5target
 LR=1e-4
-DATA=ultrachat_train
+DATA=ultrachat
 DP=$(( NUM_GPUS / TP_SIZE ))
 RUNNAME=$CONFIG_NAME-${DATA}-$LR-onestep-full-BS$DP
 echo "====================RUN====================="
@@ -30,7 +30,8 @@ torchrun \
     --attention-backend one_step_flex_attention \
     --is-jacobi \
     --use-causal-attention false \
-    --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
+    --train-data-path $ROOT_DIR/cache/dataset/${DATA}_train.jsonl \
+    --eval-data-path $ROOT_DIR/cache/dataset/${DATA}_test.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
     --output-dir $ROOT_DIR/outputs/$RUNNAME \
     --num-epochs 10 \

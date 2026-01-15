@@ -13,7 +13,7 @@ mkdir -p $ROOT_DIR/logs
 
 CONFIG_NAME=qwen3-8b-eagle3
 LR=1e-4
-DATA=ultrachat_train
+DATA=ultrachat
 DP=$(( NUM_GPUS / TP_SIZE ))
 RUNNAME=$CONFIG_NAME-${DATA}-$LR-$DP
 echo "====================RUN====================="
@@ -26,7 +26,8 @@ torchrun \
     $ROOT_DIR/scripts/train_eagle3.py \
     --target-model-path Qwen/Qwen3-8B \
     --draft-model-config $ROOT_DIR/configs/${CONFIG_NAME}.json \
-    --train-data-path $ROOT_DIR/cache/dataset/${DATA}.jsonl \
+    --train-data-path $ROOT_DIR/cache/dataset/${DATA}_train.jsonl \
+    --eval-data-path $ROOT_DIR/cache/dataset/${DATA}_test.jsonl \
     --build-dataset-num-proc $BUILD_DATASET_NUM_PROC \
     --output-dir $ROOT_DIR/outputs/$RUNNAME \
     --num-epochs 10 \
@@ -39,7 +40,7 @@ torchrun \
     --tp-size $TP_SIZE \
     --target-model-backend sglang \
     --save-interval 5000 \
-    --eval-interval 500 \
+    --eval-interval 5000 \
     --report-to wandb \
     --wandb-project specforge \
     --wandb-name $RUNNAME \
