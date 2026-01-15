@@ -361,13 +361,15 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
     else:
         # Use provided config file
         draft_model_config = AutoDraftModelConfig.from_file(args.draft_model_config)
-        print(f"{draft_model_config=}")
+    print(f"{draft_model_config=}")
 
     # Handle base ckpt, config file
     draft_model_last_checkpoint = None
     if args.ckpt_dir is not None:
         if os.path.isdir(args.ckpt_dir):
-            draft_model_config = os.path.join(args.ckpt_dir, "config.json")
+            draft_model_config = AutoDraftModelConfig.from_file(
+                os.path.join(args.ckpt_dir, "config.json")
+            )
             draft_model_last_checkpoint = args.ckpt_dir
             print_on_rank0(f"Finetuning from base model: {draft_model_last_checkpoint}")
         else:
@@ -856,7 +858,7 @@ def main():
             plosses, acces = run_forward(
                 args, eagle3_model, data, target_model, is_online
             )
-            run_backward_and_update(args, plosses, optimizer, global_step)
+            # run_backward_and_update(args, plosses, optimizer, global_step)
 
             # log training metrics
             if global_step % (args.log_interval * args.draft_accumulation_steps) == 0:
