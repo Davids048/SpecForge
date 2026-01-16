@@ -474,7 +474,7 @@ class Qwen3ForCausalLMJacobi(JacobiDraftModel):
     def project_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # eagle 3 requires hidden states from 3 layers
         assert hidden_states.size(-1) == self.config.hidden_size * self.num_aux_layers
-        return self.norm(self.fc(hidden_states))
+        return self.hidden_norm(self.fc(hidden_states))
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Compute the logits of the draft model using target's lm_head."""

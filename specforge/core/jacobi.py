@@ -91,23 +91,6 @@ class OnlineJacobiModel(JacobiModel):
         position_ids: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
-        # DEBUG: Override inputs with simple test data
-        DEBUG_TEST = os.getenv("DEBUG_JACOBI", False)
-        if DEBUG_TEST:
-            device = hidden_states.device
-            dtype = hidden_states.dtype
-            batch_size = hidden_states.shape[0]
-            debug_seq_len = 7
-            vocab_size = target.shape[-1]
-            hidden_dim = hidden_states.shape[-1]  # num_target_layers * hidden_size
-
-            input_ids = torch.arange(1, debug_seq_len + 1, device=device).unsqueeze(0).expand(batch_size, -1)
-            attention_mask = torch.ones(batch_size, debug_seq_len, device=device)
-            loss_mask = torch.ones(batch_size, debug_seq_len, 1, device=device)
-            hidden_states = torch.randn(batch_size, debug_seq_len, hidden_dim, device=device, dtype=dtype)
-            target = torch.randn(batch_size, debug_seq_len, vocab_size, device=device, dtype=dtype)
-            target = F.softmax(target, dim=-1)  # make it a valid probability distribution
-            print(f"DEBUG: input_ids={input_ids}, seq_len={debug_seq_len}, hidden_dim={hidden_dim}, vocab={vocab_size}, {loss_mask=}")
 
         # Step 1: handle vocab size
         target_p_padded, position_mask = _compute_target_p_padded(
