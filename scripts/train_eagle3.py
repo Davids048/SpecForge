@@ -397,10 +397,19 @@ def build_draft_model(args: Namespace) -> Tuple[AutoDraftModelConfig, nn.Module]
                 torch_dtype=torch.bfloat16,
             ).cuda()
 
-        # Add a special token for the mask token.
+        # Set mask token for Jacobi drafting.
         tokenizer = AutoTokenizer.from_pretrained(args.target_model_path)
-        tokenizer.add_special_tokens({"mask_token": "<|MASK|>"})
-        draft_model.set_mask_token_id(tokenizer.mask_token_id)
+        if tokenizer.mask_token_id is not None:
+            # Tokenizer already has a mask token
+            mask_token_id = tokenizer.mask_token_id
+        elif "<|reserved_special_token_0|>" in tokenizer.get_vocab():
+            # Use Llama 3's reserved special token (ID 128002) as mask token
+            mask_token_id = tokenizer.convert_tokens_to_ids("<|reserved_special_token_0|>")
+        else:
+            # Fallback: add a new mask token (may require embedding resize)
+            tokenizer.add_special_tokens({"mask_token": "<|MASK|>"})
+            mask_token_id = tokenizer.mask_token_id
+        draft_model.set_mask_token_id(mask_token_id)
     else:
         if draft_model_last_checkpoint:
             draft_model = AutoEagle3DraftModel.from_pretrained(
@@ -858,7 +867,7 @@ def main():
             plosses, acces = run_forward(
                 args, eagle3_model, data, target_model, is_online
             )
-            # run_backward_and_update(args, plosses, optimizer, global_step)
+            run_backward_and_update(args, plosses, optimizer, global_step)
 
             # log training metrics
             if global_step % (args.log_interval * args.draft_accumulation_steps) == 0:
